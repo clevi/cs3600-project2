@@ -28,11 +28,7 @@ int get_num_dblocks(int size){
   return fat_plus_db * (128 / 129);
 }
 
-void myformat(int size) {
-  // Do not touch or move this function
-  dcreate_connect();
-
-  int num_dblocks = get_num_dblocks(size);
+vcb make_volblock(int num_dblocks){
 
   vcb volblock;
   volblock.disk_id = MAGICNUM;
@@ -53,11 +49,31 @@ void myformat(int size) {
   clock_gettime(CLOCK_REALTIME, &volblock.access_time);
   clock_gettime(CLOCK_REALTIME, &volblock.modify_time);
   clock_gettime(CLOCK_REALTIME, &volblock.create_time);
+
+  return volblock;
+}
+ 
+void myformat(int size) {
+  // Do not touch or move this function
+  dcreate_connect();
   
+  int num_dblocks = get_num_dblocks(size);
+
+  vcb volblock = make_volblock(num_dblocks);
   char temp[BLOCKSIZE];
   memset(temp,0,BLOCKSIZE);
   memcpy(temp,&volblock,sizeof(vcb));
   dwrite(0,temp);
+
+/*
+  dirent dent;
+
+  char dirblock[BLOCKSIZE];
+  memset(dirblock,0,BLOCKSIZE);
+  memcpy(dirblock,&dirent,sizeof(dirblock));
+  for(int i = 1; i <= 100; i++){
+   dwrite(i,dirblock);
+  }  */
 
   /* 3600: FILL IN CODE HERE.  YOU SHOULD INITIALIZE ANY ON-DISK
            STRUCTURES TO THEIR INITIAL VALUE, AS YOU ARE FORMATTING
