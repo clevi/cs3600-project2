@@ -13,7 +13,8 @@
 typedef struct vcb_s {
     int disk_id; // Unique disk identifier.
 
-    int crash_test:1; // Flag indicating safe unmounting. Set to 1 on safe unmount.
+    int mounted:1; // Flag that is set to 1 when disk is mounted.
+		   // Used to detect unmounting errors.
 
     // Disk layout metadata.
     int blocksize; // Size of a block in the disk.

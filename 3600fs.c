@@ -65,10 +65,11 @@ static void* vfs_mount(struct fuse_conn_info *conn) {
   if(volblock.disk_id != MAGICNUM){
    fprintf(stderr,"Invalid disk: Invalid magic number.");
    dunconnect();
-  } else if(volblock.crash_test != 1){
-   fprintf(stderr,"Invalid disk: Disk unmounted unsafely.");    
-
+  } else if(volblock.mounted == 1){
+   fprintf(stderr,"Invalid disk: Disk did not unmount correctly.");    
   }
+  // TODO: Possibly check dirents for invalid info 
+  // (e.g. missing data in dirents). Deal with them maybe.
   return NULL;
 }
 
@@ -78,6 +79,17 @@ static void* vfs_mount(struct fuse_conn_info *conn) {
  */
 static void vfs_unmount (void *private_data) {
   fprintf(stderr, "vfs_unmount called\n");
+
+  vcb volblock;
+  char temp[BLOCKSIZE];
+  memset(temp,0,BLOCKSIZE);
+  dread(0,temp);
+  memcpy(&volblock,temp,sizeof(volblock));
+  
+  vcb.mounted = 0; // Flip mounted bit, indicating safe dismount.
+
+  memcpy(&volblock,temp,sizeof(volblock));
+  dwrite(0, temp);
 
   /* 3600: YOU SHOULD ADD CODE HERE TO MAKE SURE YOUR ON-DISK STRUCTURES
            ARE IN-SYNC BEFORE THE DISK IS UNMOUNTED (ONLY NECESSARY IF YOU
@@ -178,7 +190,54 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
  *
  */
 static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
-    return 0;
+
+  // First, we must load all dirents into memory.
+  dirent[100] entries = calloc(100, BLOCKSIZE); //FIXME: Change size when we make dirents smaller.
+
+/*
+  vcb volblock;
+  char temp[BLOCKSIZE];
+  memset(temp,0,BLOCKSIZE);
+  dread(0,temp);
+  memcpy(&volblock,temp,sizeof(volblock));
+*/
+  
+  for(int i = 1; i < 101; i++){
+    dirent temp;
+    dread(i,temp);
+  }
+
+  // Next, we want to check the path for errors and extract file name.
+
+
+  // TODO: Confirm that '/'s aren't allowed in file names.
+
+  int acc = 0; // Number of '/'s in string.
+  int found = 0; // Flag representing location of first '/'.
+  char* temp = path;
+
+  // Finds how many /s are in string. If only 1 /, path becomes filename.
+  while(*temp){
+   if(*temp == '/'){
+     acc++;
+     if(found == 0){
+       found = 1;
+       path = temp; // Path is now the file name.
+     }
+     temp++;
+   }
+  }
+
+  if(acc != 1) // If the path is malformed, we have a bad path and
+    return -1; // return the error code, -1.
+
+  // Now, we check our saved (valid) dirents in entries 
+  // for a dup file name.
+  for(int i = 0; i < 100; i++){
+     if(entries[i]
+
+  free(entries);
+  return 0;
 }
 
 /*
