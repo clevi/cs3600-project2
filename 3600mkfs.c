@@ -52,18 +52,42 @@ vcb make_volblock(int num_dblocks){
 
   return volblock;
 }
+
+// FIXME: We need to account for small sized dirents. Internal frags.
+// TODO: Make size do something. Maybe.
+dirent make_directent(){
+  dirent de;
+  de.valid = 0;
+  de.size = 0;
+  return de;
+}
  
 void myformat(int size) {
   // Do not touch or move this function
   dcreate_connect();
   
+  // Calculate number of data blocks, FAT entries.
   int num_dblocks = get_num_dblocks(size);
 
+  // Format volume control block.
   vcb volblock = make_volblock(num_dblocks);
-  char temp[BLOCKSIZE];
-  memset(temp,0,BLOCKSIZE);
-  memcpy(temp,&volblock,sizeof(vcb));
-  dwrite(0,temp);
+  char vcbtemp[BLOCKSIZE];
+  memset(vcbtemp,0,BLOCKSIZE);
+  memcpy(vcbtemp,&volblock,sizeof(vcb));
+  dwrite(0,vcbtemp);
+  
+  // Format directory entries.
+  dirent dent = make_directent();
+  char dirtemp[BLOCKSIZE]; //FIXME: Eventually will have to be smaller.
+  memset(dirtemp,0,BLOCKSIZE);
+  memcpy(dirtemp,&dent, sizeof(dirent));
+  
+  for(int i = 1; i < 101; i++){
+    dwrite(i,dirtemp);
+  }
+
+
+
 
 /*
   dirent dent;
