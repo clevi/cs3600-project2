@@ -38,6 +38,53 @@
 #include "3600fs.h"
 #include "disk.h"
 
+vcb getvcb(){
+  vcb vb;
+  char temp_vb[BLOCKSIZE];
+  memset(temp_vb, 0, BLOCKSIZE);
+  dread(0, temp_vb);
+  memcpy(&vb, temp_vb, sizeof(vcb));
+  return vb;
+}
+
+void setvcb(vcb vb){
+  char temp_vb[BLOCKSIZE];
+  memset(temp_vb, 0, BLOCKSIZE);
+  memcpy(temp_vb, &vb, sizeof(vcb));
+  dwrite(0, temp_vb);
+}
+
+dirent getdirent(int i){
+  dirent de;
+  char temp_de[BLOCKSIZE];
+  memset(temp_de, 0, BLOCKSIZE);
+  dread(i, temp_de);
+  memcpy(&de, temp_de, sizeof(de));
+  return de;
+}
+
+void setdirent(int idx, dirent de){
+  char temp_de[BLOCKSIZE];
+  memset(temp_de,0,BLOCKSIZE);
+  memcpy(temp_de,&de,sizeof(de));
+  dwrite(idx,temp_de);
+}
+
+// Checks for a valid path. A valid path only has one /.
+int validate_path(const char* path){
+  const char* temp = path;
+  int num_slash = 0;
+
+  while(*temp){
+    if(*temp == '/')
+      num_slash++;
+  }
+  if(num_slash != 1)
+    return -1;
+  else
+    return 0;	
+}
+
 /*
  * Initialize filesystem. Read in file system metadata and initialize
  * memory structures. If there are inconsistencies, now would also be
@@ -52,24 +99,35 @@ static void* vfs_mount(struct fuse_conn_info *conn) {
 
   // Do not touch or move this code; connects the disk
   dconnect();
-  
+
   /* 3600: YOU SHOULD ADD CODE HERE TO CHECK THE CONSISTENCY OF YOUR DISK
            AND LOAD ANY DATA STRUCTURES INTO MEMORY */
 
+//  vcb volblock = getvcb();
+//  fprintf(stderr, "milestone 2");
+
   vcb volblock;
   char temp[BLOCKSIZE];
-  memset(temp,0,BLOCKSIZE);
-  dread(0,temp);
-  memcpy(&volblock,temp,sizeof(volblock));
+  memset(temp, 0, BLOCKSIZE);
+  dread(0, temp);
+  memcpy(&volblock, temp, BLOCKSIZE);
 
   if(volblock.disk_id != MAGICNUM){
-   fprintf(stderr,"Invalid disk: Invalid magic number.");
-   dunconnect();
-  } else if(volblock.mounted == 1){
-   fprintf(stderr,"Invalid disk: Disk did not unmount correctly.");    
+    fprintf(stderr, "Invalid disk: Invalid magic number.");
+    dunconnect();
   }
-  // TODO: Possibly check dirents for invalid info 
-  // (e.g. missing data in dirents). Deal with them maybe.
+  if(volblock.mounted != 0){
+    fprintf(stderr, "Invalid disk: Disk did not unmount correctly.");
+    dunconnect();
+  }
+  else{
+    volblock.mounted = 1;
+//    setvcb(volblock);
+    char temp[BLOCKSIZE];
+    memcpy(temp, &volblock, BLOCKSIZE); // FIXME: This is segfaulting.
+    dwrite(0, temp);
+  }
+  fprintf(stderr, "RETURNING FROM VFS_MOUNT");
   return NULL;
 }
 
@@ -82,13 +140,13 @@ static void vfs_unmount (void *private_data) {
 
   vcb volblock;
   char temp[BLOCKSIZE];
-  memset(temp,0,BLOCKSIZE);
-  dread(0,temp);
-  memcpy(&volblock,temp,sizeof(volblock));
+  memset(temp, 0, BLOCKSIZE);
+  dread(0, temp);
+  memcpy(&volblock, temp, sizeof(volblock));
   
-  vcb.mounted = 0; // Flip mounted bit, indicating safe dismount.
-
-  memcpy(&volblock,temp,sizeof(volblock));
+  volblock.mounted = 0;
+  
+  memcpy(temp, &volblock, sizeof(volblock));
   dwrite(0, temp);
 
   /* 3600: YOU SHOULD ADD CODE HERE TO MAKE SURE YOUR ON-DISK STRUCTURES
@@ -135,7 +193,59 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
   stbuf->st_blocks  = // file size in blocks
     */
 
-  return 0;
+  if(strcmp(path, "/") == 0){
+    vcb vb = getvcb();
+    
+    struct tm * tm1;
+    struct tm * tm2;
+    struct tm * tm3;
+    tm1 = localtime(&((vb.access_time).tv_sec));
+    tm2 = localtime(&((vb.modify_time).tv_sec));
+    tm3 = localtime(&((vb.create_time).tv_sec));
+    
+    stbuf->st_mode = 0777 | S_IFDIR;
+    
+    stbuf->st_uid = vb.userid;
+    stbuf->st_gid = vb.groupid;
+    stbuf->st_atime = mktime(tm1);
+    stbuf->st_mtime = mktime(tm2);
+    stbuf->st_ctime = mktime(tm3);
+    stbuf->st_size = BLOCKSIZE;
+    stbuf->st_blocks = 1;
+    return 0;
+  }
+  else{
+    if(validate_path(path) != 0) // If the path is valid, we can proceed.
+      return -1;
+    path++;
+    // char *filename = (char *) malloc(512 - (3 * sizeof(timespec)) - 24);
+    for(int i = 1; i < 101; i++){
+      dirent de = getdirent(i);
+      if(de.valid == 1){
+	fprintf(stderr, "de.name: %s", de.name);
+	if(strcmp(de.name, path) == 0){
+	  struct tm * tm1;
+	  struct tm * tm2;
+	  struct tm * tm3;
+	  tm1 = localtime(&((de.access_time).tv_sec));
+	  tm2 = localtime(&((de.modify_time).tv_sec));
+	  tm3 = localtime(&((de.create_time).tv_sec));
+	  
+	  stbuf->st_mode = de.mode | S_IFREG;
+	  
+	  stbuf->st_uid = de.userid;
+	  stbuf->st_gid = de.groupid;
+	  stbuf->st_atime = mktime(tm1);
+	  stbuf->st_mtime = mktime(tm2);
+	  stbuf->st_ctime = mktime(tm3);
+	  stbuf->st_size = de.size;
+	  stbuf->st_blocks = (de.size / BLOCKSIZE);
+	  return 0;
+	}// End if
+      }// End if
+    }// End for loop
+    return -ENOENT;
+  }
 }
 
 /*
@@ -153,7 +263,7 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
 static int vfs_mkdir(const char *path, mode_t mode) {
 
   return -1;
-} */
+  } */
 
 /** Read directory
  *
@@ -174,14 +284,24 @@ static int vfs_mkdir(const char *path, mode_t mode) {
  * typedef int (*fuse_fill_dir_t) (void *buf, const char *name,
  *                                 const struct stat *stbuf, off_t off);
  *			   
- * Your solution should not need to touch offset and fi
+ * Your solution should not need to touch fi
  *
  */
 static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
                        off_t offset, struct fuse_file_info *fi)
 {
-
+  if(strcmp(path, "/") == 0){
+    vcb vb = getvcb();
+    for(int i = vb.de_start; i < vb.de_start+vb.de_length; i++){
+      dirent de = getdirent(i);
+      if(filler(buf, de.name, NULL, 0) != 0){
+	return -ENOMEM;
+      }
+    }
     return 0;
+  }else{
+    return -1;
+  }
 }
 
 /*
@@ -190,54 +310,53 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
  *
  */
 static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
+  vcb vb = getvcb(); // Get our VCB, used to find start/end points of dirents.
 
-  // First, we must load all dirents into memory.
-  dirent[100] entries = calloc(100, BLOCKSIZE); //FIXME: Change size when we make dirents smaller.
+  if(validate_path(path) != 0) // If the path is invalid, return an error.
+    return -1;
+  path++; // Increment path, getting rid of the leading /.
 
-/*
-  vcb volblock;
-  char temp[BLOCKSIZE];
-  memset(temp,0,BLOCKSIZE);
-  dread(0,temp);
-  memcpy(&volblock,temp,sizeof(volblock));
-*/
-  
-  for(int i = 1; i < 101; i++){
-    dirent temp;
-    dread(i,temp);
+  int free_flag = 0; // Free dirent flag. Will be nonzero if free dirents exist.
+  int first_free = 0; // Index of first free dirent. Will only be used if free_flag is nonzero.
+
+  // To create a file, we need to first read used dirents and search for a duplicate.
+  for(int i = vb.de_start; i < vb.de_start+vb.de_length; i++){
+    dirent de = getdirent(i); 
+    if(de.valid == 1){
+      if(strcmp(de.name, path) == 0)
+        return -EEXIST;
+    } else{
+        if(free_flag == 0)
+          first_free = i;
+        free_flag++;
+    }
   }
 
-  // Next, we want to check the path for errors and extract file name.
+  // File doesn't already exist. Next, check for free spaces. If free_flag != 0 first_free == idx of first free dirent.
+  if(free_flag != 0){ // If free dirents exist...
+    dirent new_file; // Creating a new dirent, and assign its fields.
+    new_file.valid = 1;
+    new_file.size = 0;
+    new_file.userid = getuid();
+    new_file.groupid = getgid();
+    new_file.mode = mode;
 
+    struct timespec newtime;
+    clock_gettime(CLOCK_REALTIME, &newtime);
 
-  // TODO: Confirm that '/'s aren't allowed in file names.
+    new_file.access_time = newtime;
+    new_file.modify_time = newtime;
+    new_file.create_time = newtime;
 
-  int acc = 0; // Number of '/'s in string.
-  int found = 0; // Flag representing location of first '/'.
-  char* temp = path;
+    char file_name[512 - (3*sizeof(struct timespec)) - 24]; // Build the name string...
+    memset(file_name,0,(512-(3*sizeof(struct timespec))-24));
+    strcat(file_name,path); // Save path in to filename. Note: path has already been incrimented, so we're good.
+    strcpy(new_file.name, file_name);
 
-  // Finds how many /s are in string. If only 1 /, path becomes filename.
-  while(*temp){
-   if(*temp == '/'){
-     acc++;
-     if(found == 0){
-       found = 1;
-       path = temp; // Path is now the file name.
-     }
-     temp++;
-   }
+    setdirent(first_free,new_file); // Finally, we write our new dirent to disk at the index of first_free.
+    return 0;
   }
-
-  if(acc != 1) // If the path is malformed, we have a bad path and
-    return -1; // return the error code, -1.
-
-  // Now, we check our saved (valid) dirents in entries 
-  // for a dup file name.
-  for(int i = 0; i < 100; i++){
-     if(entries[i]
-
-  free(entries);
-  return 0;
+  return -1; // If we reached here, free_flag == 0, meaning no free dirents exist.
 }
 
 /*

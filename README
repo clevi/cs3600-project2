@@ -34,11 +34,3 @@ different FUSE versions have slightly different interfaces.
 
 You will find a great deal of resources about FUSE on the Web.  Please
 use Piazza to ask questions if you're stuck.
-
------------------------------
-
-After much thought, we decided to use FAT as our implementation, 
-because FAT is a simpler concept to understand and as we are still learning C, inodes seem very intimidating.
-
-
-
