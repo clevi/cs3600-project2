@@ -64,6 +64,13 @@ dirent make_dirent(){
   return de;
 }
 
+fatent make_fatent(){
+  fatent fe;
+  fe.used = 0;
+  fe.eof = 0;
+  fe.next = 0;
+  return fe;
+}
 
 void myformat(int size) {
   // Do not touch or move this function
@@ -86,10 +93,29 @@ void myformat(int size) {
   memset(dirtemp, 0, BLOCKSIZE);
   memcpy(dirtemp, &dent, BLOCKSIZE);
   
-  for(int i = 1; i < 101; i++){
+  for(int i = volblock.de_start; i < volblock.de_start+volblock.de_length; i++){
     dwrite(i, dirtemp);
   }
 
+  char fat_block_temp[BLOCKSIZE];
+  memset(fat_block_temp,0,BLOCKSIZE);
+
+  fatent fe = make_fatent();
+
+  char fat_entry_temp[32];
+  memset(fat_entry_temp,0,32);
+  memcpy(fat_entry_temp,&fe,32);
+  
+
+  for(int i = volblock.fat_start; i<volblock.fat_start+volblock.fat_length;i++){
+    fprintf(stderr,"writing fat shit");
+    for(int j = 0; j < 128; j++){
+       // Set FAT defaults
+       // Format single FAT block with 128 default FAT entries
+       memcpy(&fat_block_temp[32*j],fat_entry_temp,32); 
+    }
+    dwrite(i, fat_block_temp);
+  }
   /* 3600: FILL IN CODE HERE.  YOU SHOULD INITIALIZE ANY ON-DISK
            STRUCTURES TO THEIR INITIAL VALUE, AS YOU ARE FORMATTING
            A BLANK DISK.  YOUR DISK SHOULD BE size BLOCKS IN SIZE. */

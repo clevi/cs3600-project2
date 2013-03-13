@@ -54,11 +54,11 @@ void setvcb(vcb vb){
   dwrite(0, temp_vb);
 }
 
-dirent getdirent(int i){
+dirent getdirent(int idx){
   dirent de;
   char temp_de[BLOCKSIZE];
   memset(temp_de, 0, BLOCKSIZE);
-  dread(i, temp_de);
+  dread(idx, temp_de);
   memcpy(&de, temp_de, sizeof(de));
   return de;
 }
@@ -69,6 +69,20 @@ void setdirent(int idx, dirent de){
   memcpy(temp_de,&de,sizeof(de));
   dwrite(idx,temp_de);
 }
+/*
+fatent getfat(int idx, int offset){
+  fatent fe;
+
+  char temp_fe_block[BLOCKSIZE];
+  memset(temp_fe_block,0,BLOCKSIZE);
+
+  char temp_fe[32];
+  memset(temp_fe, 0, 32);
+
+  dread(idx, temp_fe_block);
+  //memcpy(temp_fe,temp_fe_block[,sizeof(fatent)) // FIXME
+}  
+*/
 
 // Checks for a valid path. A valid path only has one /.
 int validate_path(const char* path){
@@ -78,6 +92,7 @@ int validate_path(const char* path){
   while(*temp){
     if(*temp == '/')
       num_slash++;
+    temp++;
   }
   if(num_slash != 1)
     return -1;
@@ -103,14 +118,7 @@ static void* vfs_mount(struct fuse_conn_info *conn) {
   /* 3600: YOU SHOULD ADD CODE HERE TO CHECK THE CONSISTENCY OF YOUR DISK
            AND LOAD ANY DATA STRUCTURES INTO MEMORY */
 
-//  vcb volblock = getvcb();
-//  fprintf(stderr, "milestone 2");
-
-  vcb volblock;
-  char temp[BLOCKSIZE];
-  memset(temp, 0, BLOCKSIZE);
-  dread(0, temp);
-  memcpy(&volblock, temp, BLOCKSIZE);
+  vcb volblock = getvcb();
 
   if(volblock.disk_id != MAGICNUM){
     fprintf(stderr, "Invalid disk: Invalid magic number.");
@@ -122,12 +130,8 @@ static void* vfs_mount(struct fuse_conn_info *conn) {
   }
   else{
     volblock.mounted = 1;
-//    setvcb(volblock);
-    char temp[BLOCKSIZE];
-    memcpy(temp, &volblock, BLOCKSIZE); // FIXME: This is segfaulting.
-    dwrite(0, temp);
-  }
-  fprintf(stderr, "RETURNING FROM VFS_MOUNT");
+    setvcb(volblock);
+ }
   return NULL;
 }
 
@@ -138,16 +142,16 @@ static void* vfs_mount(struct fuse_conn_info *conn) {
 static void vfs_unmount (void *private_data) {
   fprintf(stderr, "vfs_unmount called\n");
 
-  vcb volblock;
-  char temp[BLOCKSIZE];
-  memset(temp, 0, BLOCKSIZE);
-  dread(0, temp);
-  memcpy(&volblock, temp, sizeof(volblock));
+  vcb volblock = getvcb();
+//  char temp[BLOCKSIZE];
+//  memset(temp, 0, BLOCKSIZE);
+//  dread(0, temp);
+//  memcpy(&volblock, temp, sizeof(volblock));
   
   volblock.mounted = 0;
-  
-  memcpy(temp, &volblock, sizeof(volblock));
-  dwrite(0, temp);
+  setvcb(volblock);
+//  memcpy(temp, &volblock, sizeof(volblock));
+//  dwrite(0, temp);
 
   /* 3600: YOU SHOULD ADD CODE HERE TO MAKE SURE YOUR ON-DISK STRUCTURES
            ARE IN-SYNC BEFORE THE DISK IS UNMOUNTED (ONLY NECESSARY IF YOU
@@ -170,7 +174,7 @@ static void vfs_unmount (void *private_data) {
  */
 static int vfs_getattr(const char *path, struct stat *stbuf) {
   fprintf(stderr, "vfs_getattr called\n");
-
+  fprintf(stderr, "path is: %s\n",path);
   // Do not mess with this code 
   stbuf->st_nlink = 1; // hard links
   stbuf->st_rdev  = 0;
@@ -215,11 +219,13 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
     return 0;
   }
   else{
+    fprintf(stderr,"getattr milestone_notvcb\n");
     if(validate_path(path) != 0) // If the path is valid, we can proceed.
       return -1;
     path++;
     // char *filename = (char *) malloc(512 - (3 * sizeof(timespec)) - 24);
     for(int i = 1; i < 101; i++){
+      fprintf(stderr,"getting dirent at index: %d\n",i);
       dirent de = getdirent(i);
       if(de.valid == 1){
 	fprintf(stderr, "de.name: %s", de.name);
@@ -336,6 +342,7 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) 
   if(free_flag != 0){ // If free dirents exist...
     dirent new_file; // Creating a new dirent, and assign its fields.
     new_file.valid = 1;
+    new_file.first_block = -1; // Used to indicate a file with no data.
     new_file.size = 0;
     new_file.userid = getuid();
     new_file.groupid = getgid();
@@ -348,6 +355,8 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) 
     new_file.modify_time = newtime;
     new_file.create_time = newtime;
 
+    //char file_name[27];
+    //memset(file_name,0,27);
     char file_name[512 - (3*sizeof(struct timespec)) - 24]; // Build the name string...
     memset(file_name,0,(512-(3*sizeof(struct timespec))-24));
     strcat(file_name,path); // Save path in to filename. Note: path has already been incrimented, so we're good.
@@ -393,24 +402,65 @@ static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
 static int vfs_write(const char *path, const char *buf, size_t size,
                      off_t offset, struct fuse_file_info *fi)
 {
+  if(validate_path(path) != 0)
+    return -1;
+  
+  vcb vb = getvcb();
+  path++;
 
+  for(int i = vb.de_start; i<vb.de_start+vb.de_length;i++){
+    dirent de = getdirent(i);
+    if(de.valid == 1){
+      if(strcmp(path, de.name) == 0){
+        // We found the file we need to write to. Update its metadata.
+        dirent de = getdirent(i);
+        
+        if(size+offset > de.size)
+          de.size = size+offset;
+
+	struct timespec newtime;
+	clock_gettime(CLOCK_REALTIME, &newtime);
+
+	de.access_time = newtime;
+	de.modify_time = newtime;
+
+        if(de.first_block != -1){} // Write to file... etc
+        else { 
+        // Write to file
+        }
+      }
+    }
+  return -1;
   /* 3600: NOTE THAT IF THE OFFSET+SIZE GOES OFF THE END OF THE FILE, YOU
            MAY HAVE TO EXTEND THE FILE (ALLOCATE MORE BLOCKS TO IT). */
-
-  return 0;
+  }
 }
-
 /**
  * This function deletes the last component of the path (e.g., /a/b/c you 
  * need to remove the file 'c' from the directory /a/b).
  */
 static int vfs_delete(const char *path)
 {
+  vcb vb = getvcb(); // Get our VCB, used to find start/end points of dirents.
 
+  if(validate_path(path) != 0) // If the path is invalid, return an error.
+    return -1;
+  path++; // Increment path, getting rid of the leading /.
+
+  // To create a file, we need to first read used dirents and search for a duplicate.
+  for(int i = vb.de_start; i < vb.de_start+vb.de_length; i++){
+    dirent de = getdirent(i); 
+    if(strcmp(de.name, path) == 0){
+      de.valid = 0;
+      setdirent(i,de);
+      return 0;
+    }
+  }
+   return -EEXIST;
+ 
   /* 3600: NOTE THAT THE BLOCKS CORRESPONDING TO THE FILE SHOULD BE MARKED
            AS FREE, AND YOU SHOULD MAKE THEM AVAILABLE TO BE USED WITH OTHER FILES */
-
-    return 0;
+  // TODO: Mark blocks as free.
 }
 
 /*

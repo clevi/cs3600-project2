@@ -29,8 +29,8 @@ typedef struct vcb_s{
 
 typedef struct dirent_s{
   unsigned int valid;
-  unsigned int first_block;
-  unsigned int size;
+  unsigned int first_block; // Block number of first block in fat.
+  unsigned int size;  // Size of file in bytes.
   
   uid_t userid;
   gid_t groupid;
@@ -41,6 +41,7 @@ typedef struct dirent_s{
   struct timespec create_time;
   
   // TODO: How do we modify size of name to make dirent initially 512b (BLOCKSIZE)
+  //char name[27];
   char name[512 - (3 * (sizeof(struct timespec))) - 24];
 }dirent;
 
