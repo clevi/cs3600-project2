@@ -25,7 +25,7 @@
 
 int get_num_dblocks(int size){
   int fat_plus_db = size - 101;
-  return fat_plus_db * (128/129);
+  return fat_plus_db * 0.992248062;
 }
 
 vcb make_volblock(int num_dblocks){
@@ -42,7 +42,8 @@ vcb make_volblock(int num_dblocks){
   // Should start be in blocks or in bytes? Currently in blocks
   volblock.fat_start = volblock.de_length + volblock.de_start + 1;
   // Should length be in blocks or in bytes? Currently in blocks
-  volblock.fat_length = (int) (num_dblocks/128);
+  volblock.fat_length = num_dblocks;
+
 
   volblock.db_start = volblock.fat_length + volblock.fat_start + 1;
   
@@ -67,8 +68,6 @@ dirent make_dirent(){
 fatent make_fatent(){
   fatent fe;
   fe.used = 0;
-  fe.eof = 0;
-  fe.next = 0;
   return fe;
 }
 
@@ -97,14 +96,33 @@ void myformat(int size) {
     dwrite(i, dirtemp);
   }
 
-  char fat_block_temp[BLOCKSIZE];
-  memset(fat_block_temp,0,BLOCKSIZE);
+  //  char fat_block_temp[BLOCKSIZE];
+  // memset(fat_block_temp,0,BLOCKSIZE);
 
   fatent fe = make_fatent();
 
-  char fat_entry_temp[32];
-  memset(fat_entry_temp,0,32);
-  memcpy(fat_entry_temp,&fe,32);
+  fatent fat_block[128];
+
+  int remaining = volblock.fat_length;
+  int block = volblock.fat_start;
+
+  while(remaining > 0){
+    for(int i = 0; i<128; i++){
+      fat_block[i] = fe;
+      remaining--;
+    }
+    char fat_block_temp[BLOCKSIZE];
+    memset(fat_block_temp,0,BLOCKSIZE);
+    memcpy(fat_block_temp,&fat_block,sizeof(fat_block));
+    dwrite(block,fat_block_temp);
+    block++;
+  }
+
+
+/*
+  char fat_entry_temp[4];
+  //  memset(fat_entry_temp,0,4);
+  //  memcpy(fat_entry_temp,&fe,4);
   
 
   for(int i = volblock.fat_start; i<volblock.fat_start+volblock.fat_length;i++){
@@ -112,10 +130,12 @@ void myformat(int size) {
     for(int j = 0; j < 128; j++){
        // Set FAT defaults
        // Format single FAT block with 128 default FAT entries
-       memcpy(&fat_block_temp[32*j],fat_entry_temp,32); 
+       memcpy(&fat_block_temp[4*j],fat_entry_temp,4);
+       fprintf(stderr,"memcpy(&fat_block_temp..."); 
     }
     dwrite(i, fat_block_temp);
-  }
+  }*/
+
   /* 3600: FILL IN CODE HERE.  YOU SHOULD INITIALIZE ANY ON-DISK
            STRUCTURES TO THEIR INITIAL VALUE, AS YOU ARE FORMATTING
            A BLANK DISK.  YOUR DISK SHOULD BE size BLOCKS IN SIZE. */

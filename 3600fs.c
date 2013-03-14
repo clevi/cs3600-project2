@@ -69,20 +69,52 @@ void setdirent(int idx, dirent de){
   memcpy(temp_de,&de,sizeof(de));
   dwrite(idx,temp_de);
 }
-/*
-fatent getfat(int idx, int offset){
+
+fatent getfe(int offset){
+  vcb vb = getvcb();
+  char block[BLOCKSIZE];
+  memset(block, 0, BLOCKSIZE);
+  dread(((int)(offset/128) + vb.fat_start),block);
+  if(offset > 128){
+    offset = offset % 128;
+  }
   fatent fe;
+  memcpy(&fe, block[offset], sizeof(fe));
+  return fe;
+}
 
-  char temp_fe_block[BLOCKSIZE];
-  memset(temp_fe_block,0,BLOCKSIZE);
+int allocate_fat(fatent* fe){
+  vcb vb = getvcb();
+  fatent free_fatent[128];
+  // Read in fat entries from disk
+  char block[BLOCKSIZE];
 
-  char temp_fe[32];
-  memset(temp_fe, 0, 32);
-
-  dread(idx, temp_fe_block);
-  //memcpy(temp_fe,temp_fe_block[,sizeof(fatent)) // FIXME
-}  
-*/
+  // Look for a free fat entry
+  for(int count_fat_blocks = 0; count_fat_blocks < vb.num_dblocks / 128; count_fat_blocks++){
+    
+    memset(block,0,BLOCKSIZE);
+    dread(vb.fat_start+count_fat_blocks, block);
+    
+    for(int i = 0; i < 128; i++){
+      memcpy(&free_fatent[i], block[i*4], sizeof(fatent));
+    }
+    for(int j = 0; j < 128; j++){
+      if(free_fatent[j].used == 0){
+	// We've found an unused fat entry, change eof and append
+	fe->eof = 0;
+	fe->next = j + (count_fat_blocks * 128);
+	free_fatent[j].eof = 1;
+	free_fatent[j].next = 0;
+	free_fatent[j].used = 1;
+	
+	memcpy(&block[j*4], free_fatent[j], sizeof(fatent));
+	dwrite(vb.fat_start + count_fat_blocks, block);
+	return 0;
+      }
+    }
+  }
+  return -1;
+}
 
 // Checks for a valid path. A valid path only has one /.
 int validate_path(const char* path){
@@ -412,6 +444,7 @@ static int vfs_write(const char *path, const char *buf, size_t size,
     dirent de = getdirent(i);
     if(de.valid == 1){
       if(strcmp(path, de.name) == 0){
+
         // We found the file we need to write to. Update its metadata.
         dirent de = getdirent(i);
         
@@ -424,16 +457,34 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 	de.access_time = newtime;
 	de.modify_time = newtime;
 
-        if(de.first_block != -1){} // Write to file... etc
+        if(de.first_block != -1){
+	  // int offset_overhead = 0;
+	  // Go to offset
+	  while(offset > BLOCKSIZE){
+	    fatent fe = getfe(de.first_block);
+	    // If offset is larger than current file... 
+	    if(fe.eof){
+	      // Check for free fat entry and append
+	      if(allocate_fat(&fe) != 0){
+		return -ENOSPC;
+	      }
+	    }
+	    offset-=BLOCKSIZE;
+	    // offset_overhead++;
+	  }
+	   
+	  // Write buffer to file now that we have reached the offset.
+	  
+        }
         else { 
-        // Write to file
+	  // Write to file
         }
       }
     }
+  }
   return -1;
   /* 3600: NOTE THAT IF THE OFFSET+SIZE GOES OFF THE END OF THE FILE, YOU
-           MAY HAVE TO EXTEND THE FILE (ALLOCATE MORE BLOCKS TO IT). */
-  }
+           MAY HAVE TO EXTEND THE FILE (ALLOCATE MORE BLOCKS TO IT). */  
 }
 /**
  * This function deletes the last component of the path (e.g., /a/b/c you 
