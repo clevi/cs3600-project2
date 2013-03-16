@@ -49,5 +49,4 @@ typedef struct fatent_s{
   unsigned int eof:1;
   unsigned int next:30;
 }fatent;
-
 #endif

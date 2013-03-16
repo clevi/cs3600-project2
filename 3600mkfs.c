@@ -45,7 +45,7 @@ vcb make_volblock(int num_dblocks){
   volblock.fat_length = num_dblocks;
 
 
-  volblock.db_start = volblock.fat_length + volblock.fat_start + 1;
+  volblock.db_start = ((int)volblock.fat_length/128) + volblock.fat_start + 1;
   
   volblock.userid = getuid();
   volblock.groupid = getgid();
@@ -116,6 +116,12 @@ void myformat(int size) {
     memcpy(fat_block_temp,&fat_block,sizeof(fat_block));
     dwrite(block,fat_block_temp);
     block++;
+  }
+
+  char empty_block[BLOCKSIZE];
+  memset(empty_block,0,BLOCKSIZE);
+  for(int i = 0; i < num_dblocks; i++){
+     dwrite((volblock.db_start + i), empty_block);
   }
 
 

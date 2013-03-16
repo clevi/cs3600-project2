@@ -1,3 +1,4 @@
+
 /*
  * CS3600, Spring 2013
  * Project 2 Starter Code
@@ -83,21 +84,8 @@ fatent getfe(int offset){
   return fe;
 }
 
-void set_fatent(int idx, fatent fe){
-  vcb vb = getvcb();
-  int block_num = (int) (idx/128);
-  char temp_block[BLOCKSIZE];
-
-  memset(temp_block,0,BLOCKSIZE);
-  dread( block_num + vb.fat_start,temp_block);
-
-  idx = idx%128;
-
-  memcpy(&temp_block[idx],&fe,sizeof(fatent));
-  dwrite( block_num + vb.fat_start,temp_block);
-}		
-
-
+// Attempts to append a new FAT entry to a given FAT entry's next.
+// Mutates fe to reflect new fat entry.
 int allocate_fat(fatent* fe){
   vcb vb = getvcb();
   fatent free_fatent[128];
@@ -118,6 +106,7 @@ int allocate_fat(fatent* fe){
 	// We've found an unused fat entry, change eof and append
 	fe->eof = 0;
 	fe->next = j + (count_fat_blocks * 128);
+
 	free_fatent[j].eof = 1;
 	free_fatent[j].next = 0;
 	free_fatent[j].used = 1;
@@ -134,9 +123,11 @@ int allocate_fat(fatent* fe){
 // get index of fe that contains eof given any fe
 int get_eof_fe(fatent* fe){
   int eof_dblock = 0;
-  while(fe.eof){
-    eof_dblock = fe.next;
-    fatent fe = getfe(fe.next);
+  fatent temp_fe;
+  while(fe->eof != 1){
+    eof_dblock = fe->next;
+    temp_fe = getfe(fe->next);
+    fe = &temp_fe;
   }
   return eof_dblock;
 }
@@ -231,7 +222,6 @@ static void vfs_unmount (void *private_data) {
  */
 static int vfs_getattr(const char *path, struct stat *stbuf) {
   fprintf(stderr, "vfs_getattr called\n");
-  fprintf(stderr, "path is: %s\n",path);
   // Do not mess with this code 
   stbuf->st_nlink = 1; // hard links
   stbuf->st_rdev  = 0;
@@ -276,16 +266,13 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
     return 0;
   }
   else{
-    fprintf(stderr,"getattr milestone_notvcb\n");
     if(validate_path(path) != 0) // If the path is valid, we can proceed.
       return -1;
     path++;
     // char *filename = (char *) malloc(512 - (3 * sizeof(timespec)) - 24);
     for(int i = 1; i < 101; i++){
-      fprintf(stderr,"getting dirent at index: %d\n",i);
       dirent de = getdirent(i);
       if(de.valid == 1){
-	fprintf(stderr, "de.name: %s", de.name);
 	if(strcmp(de.name, path) == 0){
 	  struct tm * tm1;
 	  struct tm * tm2;
@@ -416,7 +403,7 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) 
     //memset(file_name,0,27);
     char file_name[512 - (3*sizeof(struct timespec)) - 24]; // Build the name string...
     memset(file_name,0,(512-(3*sizeof(struct timespec))-24));
-    strcat(file_name,path); // Save path in to filename. Note: path has already been incrimented, so we're good.
+    strcpy(file_name,path); // Save path in to filename. Note: path has already been incrimented, so we're good.
     strcpy(new_file.name, file_name);
 
     setdirent(first_free,new_file); // Finally, we write our new dirent to disk at the index of first_free.
@@ -442,7 +429,67 @@ static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
                     struct fuse_file_info *fi)
 {
 
-    return 0;
+  if(validate_path(path) != 0)
+    return -1;
+  
+  vcb vb = getvcb();
+  path++;
+  
+  for(int i = vb.de_start; i<vb.de_start+vb.de_length;i++){
+    dirent de = getdirent(i);
+    if(de.valid == 1){
+      if(strcmp(path, de.name) == 0){
+        int numbytes = 0;
+	
+        int fat_start = vb.fat_start;
+        int fe_offset = de.first_block;
+	
+        int datablock_idx = vb.db_start + fe_offset;
+	
+        int offset_dblock = (int) (offset / 512); // If offset is large, we need to read from later data blocks.
+	
+        int offset_in_block = offset % 512;
+
+        char datablock_temp[BLOCKSIZE];
+        memset(datablock_temp,0,BLOCKSIZE);
+        dread(datablock_idx + offset_dblock,datablock_temp);
+	
+        // Handle first block. Copy until end of block or size == 0.
+        for(int i = offset_in_block; i < BLOCKSIZE, size > 0; i++){
+	  char* str; 
+	  strcpy(str,datablock_temp[i]);
+	  strcat(buf,str);
+	  numbytes++;
+	  size--;
+        }
+	
+	// Handle remaining full blocks.
+        while(size >= BLOCKSIZE){
+	  datablock_idx++; // Read next data block into memory.
+	  memset(datablock_temp,0,BLOCKSIZE);
+	  dread(datablock_idx,datablock_temp);
+
+	  for(int i = 0; i < BLOCKSIZE; i++){
+	    char* str;
+	    strcpy(str,datablock_temp[i]);
+	    strcat(buf,str);
+	    numbytes++;
+	  } 
+	  size -= BLOCKSIZE;
+        }
+
+	// Handle remaining size.
+        for(int i = 0; i < size; i++){
+	  char* str;
+	  strcpy(str,datablock_temp[i]);
+	  strcat(buf,str);
+	  numbytes++;
+	}        
+        return numbytes;
+      }	
+    }
+  }
+  return -1;
 }
 
 /*
@@ -459,77 +506,184 @@ static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
 static int vfs_write(const char *path, const char *buf, size_t size,
                      off_t offset, struct fuse_file_info *fi)
 {
+  // First, we ensure thepath is valid.
   if(validate_path(path) != 0)
     return -1;
   
   vcb vb = getvcb();
-  path++;
+  path++;               // Get rid of leading slash in path
+  int byteswritten = 0; // Amount of bytes we've written to disk from buffer
+  int num_pad = 0;      // Amount of 0s we need to pad between EOF and offset
+  int write_offset = 0; // variable to hold an offset for vfs_write.
+  
+  /* TODO: Potential fix:
+	for all dirents, look for valid one. When valid one with matching name is found, call helper function.
+  */
 
-  for(int i = vb.de_start; i<vb.de_start+vb.de_length;i++){
-    dirent de = getdirent(i);
-    if(de.valid == 1){
-      if(strcmp(path, de.name) == 0){
+  dirent de;
+  int found_dirent = 0;
+  
+  for(int i = vb.de_start; i < vb.de_start + vb.de_length, found_dirent == 0; i++){
+    de = getdirent(i);
+    if(de.valid == 1)
+      if(strcmp(path,de.name)==0)
+        found_dirent = 1;
+  }
 
-        // We found the file we need to write to. Update its metadata.
-        dirent de = getdirent(i);
-        
-        if(size+offset > de.size)
-          de.size = size+offset;
-
-	struct timespec newtime;
-	clock_gettime(CLOCK_REALTIME, &newtime);
-
-	de.access_time = newtime;
-	de.modify_time = newtime;
-
-        if((int) de.first_block != -1){ // File curently has data in it.
-	  // Go to offset
-          fatent fe = getfe(de.first_block);
-	  while(offset > BLOCKSIZE){  // If offset is larger than current file... 
-	    if(fe.eof){
-	      if(allocate_fat(&fe) != 0){ // Allocate new FAT entry.
-		return -ENOSPC;
-	      }
-	    }
-	    offset-=BLOCKSIZE;
+  if(found_dirent){	// Begin writing to disk.
+    if(offset > de.size){ // Check for padding.
+      num_pad = (offset - de.size); // Number of 0's to add.
+    }
+    if((size + offset) > de.size){
+      de.size = (size + offset);    // Set the new size of the file.
+    }
+    
+    // Update access modify times of file
+    struct timespec newtime;
+    clock_gettime(CLOCK_REALTIME, &newtime);
+    
+    de.access_time = newtime;
+    de.modify_time = newtime;
+    
+    /* Next, since we have our dirent to write to, we must:
+       - Check to see if the dirent has a FAT entry allocated.
+       - Attempt to allocate one if necessary.
+       x If the dirent has at least one FAT entry, begin writing:
+       x Begin traversing offset, decrementing it as necessary until offset == 0.
+       x Attempt to create new FAT entries if necessary.
+       x Begin padding the file with zeros, if necessary, decrementing num_pad until it == 0.
+       x Attempt to create new FAT entries if necessary.
+       x Begin appending buf to file, decrementing size while doing so.
+       x Attempt to create new FAT entries if necessary.
+       x If, in any of the above cases, creating a new FAT entry fails, return -ENOSPC.
+    */    
+    
+    // Check if found dirent has allocated FAT. If not, attempt to allocate one.
+    if((int) de.first_block == -1){
+      char block[BLOCKSIZE];
+      int found_free = 0;
+      
+      for(int i = vb.fat_start;(i < vb.fat_start + ((int) (vb.fat_length/128))) && found_free == 0; i++){ // For each fat block...
+	int block_index = (i-vb.fat_start)*128;
+	
+	memset(block,0,BLOCKSIZE); // Reset block.
+	dread(i, block); // Read FAT Block into block.
+	
+	for(int j = 0; j < 128 && found_free == 0; j++){
+	  fatent fe = getfe( block_index + j);
+	  if(fe.used == 0){
+	    de.first_block = block_index + j;
+	    fe.used = 1;
+	    fe.eof = 1;
+	    fe.next = 0;
+	    found_free = 1;
 	  }
-	  // Fill the rest of the block so we don't have to worry about offset+size
-	  char temp[BLOCKSIZE];
-	  int index = get_eof_fe(&fe) + vb.db_start;
-	  memset(temp,0,BLOCKSIZE);
-	  dread(index, temp);
-	  memcpy(&temp[offset], &buf, (BLOCKSIZE - offset));
-	  dwrite(index, temp);
-
-	  int buffer_index = BLOCKSIZE - offset;
-
-	  // Allocate as many dblocks as we need with corresponding fat ents, return -1 on full disk
-	  int make_this_many = size / BLOCKSIZE;
-	  set_many_fe(eof_dblock, make_this_many);
-
-	  while(size > BLOCKSIZE){
-	    // Set eof fatent 
-	    // read dblock
-	    size-=BLOCKSIZE;
-	    // write current dblock
-	    // dwrite(
-	    // read the next dblock of file into temp
-	    // dread(
-	  }
-	  
-	  // ELSE: offset + size < BLOCKSIZE
-	  memcpy(&temp[offset], &buf, size);
-	  dwrite(get_eof_fe(&fe)+vb.db_start, temp);
-        }
-        else { 
-	  // Write to file de has no data already. No fat entries assigned for file.
-        }
+	}
+      }
+      if(found_free != 1){
+        return -ENOSPC;
       }
     }
+    
+    
+    
+    fatent fe = getfe(de.first_block);
+    
+    char block[BLOCKSIZE];
+    memset(block,0,BLOCKSIZE);
+      
+    // Expand file and pad 0's, if necessary.
+    if(num_pad > 0){
+      
+      int eof_fat_idx = get_eof_fe(&fe) + vb.db_start;// find index of eof 
+      dread(eof_fat_idx,block);
+	
+      int eof_data_idx;
+	
+      for(int i = 0; block[i] != EOF; i++)
+        eof_data_idx++;
+
+      eof_data_idx++; // Increment counter so block[eof_data_idx] == EOF.
+	
+	while(num_pad > 0){
+          if(eof_data_idx < BLOCKSIZE){
+	    memset(block[eof_data_idx],0,1);
+	    eof_data_idx++;
+	    num_pad--;
+	    if(num_pad == 0){
+		dwrite(eof_data_idx,block);
+		memset(block,0,BLOCKSIZE);
+	    }
+          } 
+	  else{
+	    dwrite(eof_fat_idx,block);
+	    memset(block,0,BLOCKSIZE);
+	    if(allocate_fat(&fe) != 0){
+		return -ENOSPC;
+	    }
+	    eof_fat_idx = get_eof_fe(&fe) + vb.db_start;
+	    eof_data_idx = 0;
+	  }
+	}
+    }    
+        
+    // Now, we need to start writing size chars from buf into the file, starting at offset
+    
+    // Start by finding where offset is in the datablock.
+    int offset_block = (int)(offset/512);
+    int offset_into_block = offset % 512;
+    int buffer_offset = 0;
+    
+    // Read in offset block, write at offset into block
+    memset(block,0,BLOCKSIZE);
+    dread(offset_block + vb.db_start, block);
+    
+    // Memcpy the rest of the block, or size bytes, whichever bounds first
+    while(offset_into_block < BLOCKSIZE && size > 0){
+      memcpy(&block[offset_into_block], &buf, 1);
+      size--;
+      buffer_offset++;
+      offset_into_block++;
+      byteswritten++;
+    }
+
+    // Write block rest of block
+    dwrite(offset_block + vb.db_start, block);
+    
+    // While there remains bytes to be written...
+    while(size > 0){
+      if(offset_into_block == BLOCKSIZE){
+	// Write block
+	dwrite(offset_block + vb.db_start, block);
+	
+	// Allocate new fat/data block
+	if(allocate_fat(&fe) != 0){
+	  return -ENOSPC;
+	}
+	
+	// reset offset_into_block
+	offset_into_block = 0;
+	offset_block = get_eof_fe(&fe);
+      }
+      
+      memset(block,0,BLOCKSIZE);
+      memcpy(&block[offset_into_block], &buf[buffer_offset], 1);
+      
+      size--;
+      buffer_offset++;
+      offset_into_block++;
+      byteswritten++;
+    }
+
+    // Write the rest of size bytes
+    dwrite(offset_block + vb.db_start, block);
+    return byteswritten;
   }
-  return -1;
-  /* 3600: NOTE THAT IF THE OFFSET+SIZE GOES OFF THE END OF THE FILE, YOU
-           MAY HAVE TO EXTEND THE FILE (ALLOCATE MORE BLOCKS TO IT). */  
+  else{
+    // No free dirents found
+    return -1;
+  }
+  
 }
 /**
  * This function deletes the last component of the path (e.g., /a/b/c you 
@@ -568,8 +722,20 @@ static int vfs_delete(const char *path)
  */
 static int vfs_rename(const char *from, const char *to)
 {
+  vcb vb = getvcb();
 
-    return 0;
+  if(validate_path(from) != 0)
+    return -1;
+
+  from++;
+  for(int i = vb.de_start; i < vb.de_start+vb.de_length;i++){
+    dirent de = getdirent(i);
+    if(strcmp(de.name,from) == 0){
+      strcpy(de.name, to);
+      return 0;
+    }
+  }
+  return -1;
 }
 
 
@@ -592,8 +758,9 @@ static int vfs_chmod(const char *file, mode_t mode)
   file++;
   for(int i = vb.de_start; i < vb.de_start+vb.de_length; i++){
     dirent de = getdirent(i);
-    if(strcmp(de.name,path)==0){
-      de.mode = (mode & 0x0000ffff);
+    if(strcmp(de.name,file)==0){
+      //de.mode = (mode & 0x0000ffff);
+      de.mode = mode;
       setdirent(i,de);
       return 0; // Success
     }
@@ -616,7 +783,7 @@ static int vfs_chown(const char *file, uid_t uid, gid_t gid)
   file++;
   for(int i = vb.de_start; i < vb.de_start+vb.de_length; i++){
     dirent de = getdirent(i);
-    if(strcmp(de.name,path)==0){
+    if(strcmp(de.name,file)==0){
       de.userid = uid;
       de.groupid = gid;
       setdirent(i,de);
@@ -640,7 +807,7 @@ static int vfs_utimens(const char *file, const struct timespec ts[2])
   file++;
   for(int i = vb.de_start; i < vb.de_start+vb.de_length; i++){
     dirent de = getdirent(i);
-    if(strcmp(de.name,path)==0){
+    if(strcmp(de.name,file)==0){
       de.access_time = ts[0];
       de.modify_time = ts[1];
       setdirent(i,de);
@@ -660,10 +827,12 @@ static int vfs_truncate(const char *file, off_t offset)
 
   /* 3600: NOTE THAT ANY BLOCKS FREED BY THIS OPERATION SHOULD
            BE AVAILABLE FOR OTHER FILES TO USE. */
-
-    return 0;
+  if(validate_path(file) != 0){
+    return -1;
+  }
+  
+  return 0;
 }
-
 
 /*
  * You shouldn't mess with this; it sets up FUSE
